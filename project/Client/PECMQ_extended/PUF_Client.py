@@ -12,6 +12,7 @@ import galois
 from reedsolo import RSCodec
 import tracemalloc
 import time
+import ldp_simulator_new as ldp
 
 class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
     
@@ -108,7 +109,7 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
             size = header_body[1].split('-s ')[1].split(' -id ')[0]
             id = header_body[1].split(' -id ')[1].split(';')[0]
             if((id == self.id) or id == 'all'):
-                self.enroll(size)
+                self.enroll_with_ldp(size)
             else:
                 print("Enroll call is not mine.")
 
@@ -134,7 +135,51 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
     def challenge(self, challenge_vector):
         print(self.id + "Challenging PUF with " + challenge_vector)
 
-    def enroll(self, set_size):
+    def enroll_with_ldp(self, set_size):
+        print(self.id + " Enrolling to TTP")
+        size = int(set_size)
+        set_dict = {}
+        challenge_set   = self.PUF_instance.generate_challenge(size)
+        feature_set     = self.PUF_instance.calc_features(challenge_set)
+        xor_responses   = self.PUF_instance.bin_response(feature_set)
+        xor_responses           = np.array([(int(1-i)/2) for i in xor_responses])
+        new_feature_set    = np.transpose(feature_set,(2,0,1))
+        # new_feature_set    = new_feature_set[:,0,:self.challenge_size+1]
+        
+        new_challenge_set = np.transpose(challenge_set,(2,0,1))
+        # new_challenge_set = new_challenge_set[:,0,:self.challenge_size]
+        print("new challenge set shape: " + str(new_challenge_set.shape))
+        for i in range(size):
+            set_dict [str(i)] = {'challenge': new_challenge_set[i,0,:].tolist(),
+                                 'feature'  : new_feature_set[i,0,:].tolist(),
+                                 'response' : xor_responses[i]}
+
+        puf_dir =  "CLIENT_PUF_" + self.id
+        set_json_file = open(puf_dir+"/original_crp_"+str(size)+".json",'w')
+        json.dump(set_dict,set_json_file)
+        set_json_file.close()
+
+        segmented_input_json_file, output_json_file  = ldp.process_json(puf_dir+"/original_crp_"+str(size)+".json", 
+                                                                        puf_dir+"/original_segmented_crp_"+str(size)+".json",
+                                                                        puf_dir+"/ldp_crp_"+str(size)+".json")
+
+        ldp_crp_set = ''
+        outfile = open(output_json_file, 'r')
+        ldp_set = json.load(outfile)
+        group_counts = ldp.count_response_bits(ldp_set,False,"")
+        for key in ldp_set:
+            final_val = 0
+            if (group_counts[key]['ones'] >= group_counts[key]['zeros']):
+                final_val = 1
+            ldp_set[key]['avg_response'] = final_val 
+        ldp_crp_set = json.dumps(ldp_set)
+        outfile.close()
+
+        self.publish(self.client_to_TTP_topic, 'enroll_device_ldp',"-id " + str(self.id) + " -csize " + str(self.challenge_size) + " -nxor " + str(self.xor_size) + " -crp " + ldp_crp_set)
+        
+
+
+    def enroll_legacy(self,set_size):
         print(self.id + " Enrolling to TTP")
         size = int(set_size)
         challenge_set   = self.PUF_instance.generate_challenge(size)
@@ -169,7 +214,7 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
         meta_str = str(feature_set.shape[0]) + ' ' + str(training_feature_set.shape[0]) + ' ' + str(training_feature_set.shape[1])
         crp_str = meta_str + "&" + challenge_str + "&" + resp_str
        
-        print(xor_responses.shape)
+        # print(xor_responses.shape)
         # Send the CRP set to TTP
         self.publish(self.client_to_TTP_topic, 'enroll_device',"-id " + str(self.id) + " -csize " + str(self.challenge_size) + " -nxor " + str(self.xor_size) + " -crp " + crp_str)
         

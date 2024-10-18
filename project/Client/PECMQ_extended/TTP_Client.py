@@ -43,8 +43,10 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
 
         ##IMPORTANT:: This line of code is needed to append the name of newly defined class specific executables::
         self.executables.append('enroll_device')
+        self.executables.append('enroll_device_ldp')
         self.executables.append('establish_private_topic')
         self.executables.append('verify_hash')
+
        
         ## ____________________________________________________________________________________________
 
@@ -80,6 +82,13 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
             nxor = int(header_body[1].split('-nxor ')[1].split(' -crp ')[0])
             crp = header_body[1].split(' -crp ')[1].split(';')[0]
             self.enroll_device(id,crp,csize,nxor)
+        
+        if header_parts[2] == 'enroll_device_ldp':
+            id = header_body[1].split('-id ')[1].split(' -csize ')[0]
+            csize = int(header_body[1].split('-csize ')[1].split(' -nxor ')[0])
+            nxor = int(header_body[1].split('-nxor ')[1].split(' -crp ')[0])
+            crp = header_body[1].split(' -crp ')[1].split(';')[0]
+            self.enroll_device_ldp(id,crp,csize,nxor)
 
         elif header_parts[2] == 'establish_private_topic':
             id1 = header_body[1].split('-id1 ')[1].split(' -id2 ')[0]                
@@ -140,6 +149,27 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
             json.dump(client_info,output)
 
         self.echo_msg("Client " + id + " has been enrolled with model accuracy = " + str(acc))
+
+    def enroll_device_ldp(self, id, crp_str,csize,nxor):
+        print("Enrolling " + str(id))
+       
+        client_dir =  "CLIENT_" + id
+        if(path.exists(client_dir) != True):
+            os.mkdir(client_dir)
+
+        client_info = {
+            "id": id,
+            "csize" : csize,
+            "nxor" : nxor
+        }
+
+        with open(client_dir + "/client_info.json", 'w') as output:
+            json.dump(client_info,output)
+
+        with open(client_dir + "/client_ldp_dataset.json", 'w') as output:
+            json.dump(crp_str,output)
+
+        self.echo_msg("Client " + id + " has been enrolled with mlv")
 
 
     def verify_hash(self,id, hash,puf_time,memavg,mempeak,cput):
