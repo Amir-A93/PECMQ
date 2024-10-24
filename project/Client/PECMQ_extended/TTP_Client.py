@@ -319,8 +319,11 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
         
         # print(cset1_msg_encryped.decode('utf-8'))
         
-        self.publish("TTP2"+str(id1),"register_private_topic",' -id ' + str(id1) + ' -c ' + str(id2) + ' -rl ' + str(replen) + ' -cset ' + cset1_msg_encryped.decode('utf-8'))
-        self.publish("TTP2"+str(id2),"subscribe_to_private_topic",' -id ' + str(id2) +  ' -rl ' + str(replen) + ' -cset ' + cset2_msg_encryped.decode('utf-8'))
+        # self.publish("TTP2"+str(id1),"register_private_topic",' -id ' + str(id1) + ' -c ' + str(id2) + ' -rl ' + str(replen) + ' -cset ' + cset1_msg_encryped.decode('utf-8'))
+        # self.publish("TTP2"+str(id2),"subscribe_to_private_topic",' -id ' + str(id2) +  ' -rl ' + str(replen) + ' -cset ' + cset2_msg_encryped.decode('utf-8'))
+
+        self.publish("TTP2"+str(id1),"register_private_topic_ldp",' -id ' + str(id1) + ' -c ' + str(id2) + ' -rl ' + str(replen) + ' -cset ' + cset1_msg_encryped.decode('utf-8'))
+        self.publish("TTP2"+str(id2),"subscribe_to_private_topic_ldp",' -id ' + str(id2) +  ' -rl ' + str(replen) + ' -cset ' + cset2_msg_encryped.decode('utf-8'))
         
         #self.publish(self.TTP_to_client_topic,"subscribe_to_private_topic",' -id ' + str(id2) + ' -topic ' + wisper_topic)
         
@@ -356,7 +359,7 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
         # print(challenge_transposed.shape)
         return [challenge_transposed.tolist(), responses.tolist()]
     
-    
+   
     def binary_to_bytes(self,binary_array):
         """Convert a binary array to a list of bytes."""
         byte_array = bytearray()
@@ -413,37 +416,75 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
     def repetition_encode(self, binary_array, n_repeats):    
         return np.repeat(binary_array, n_repeats)
 
- 
+
 
     def match_making(self, topic_draft, id,cs,rl):
+            
+            challenge_size = cs
+            encoding_param = rl
+
+            encoded_topic = self.encode_with_bch(topic_draft,encoding_param)
+            
+            batch_size = len(encoded_topic) * 5
+            challenge_pack = []
+            json_ldp_set = self.load_ldp_set(id)
+            
+            dataset_keys = list(json_ldp_set.keys())
+            random.shuffle(dataset_keys)
+
+            batch_empty = False
+            taken_elements = []
+            for topic_index in encoded_topic:
+                for j in dataset_keys:
+                    try:
+                        if(j in taken_elements):
+                            continue
+                        elif(int(topic_index) == int(json_ldp_set[j]['avg_response'])):
+
+                            sub_cpack = []
+                            for key in json_ldp_set[j]:
+                                if(key != 'avg_response'):
+                                    sub_cpack.append(json_ldp_set[j][key]['feature'])
+
+                            challenge_pack.append(sub_cpack)
+                            taken_elements.append(j)
+                            break
+                    except:
+                        print("error occured in match_making.")
+                        # break
+            
+            return challenge_pack
+ 
+
+    # def match_making(self, topic_draft, id,cs,rl):
         
-        challenge_size = cs
-        encoding_param = rl
+    #     challenge_size = cs
+    #     encoding_param = rl
 
-        encoded_topic = self.encode_with_bch(topic_draft,encoding_param)
-        # encoded_topic = self.encode_with_bch(topic_draft,encoding_param)
-        # encoded_topic = self.flip_bits(np.array(encoded_topic),2) #adds artificial noise to the encoded topic
+    #     encoded_topic = self.encode_with_bch(topic_draft,encoding_param)
+    #     # encoded_topic = self.encode_with_bch(topic_draft,encoding_param)
+    #     # encoded_topic = self.flip_bits(np.array(encoded_topic),2) #adds artificial noise to the encoded topic
 
-        # print(encoded_topic)
-        batch_size = len(encoded_topic) * 5
-        challenge_pack = []
-        [challenges, responses] = self.infer_with_model(id,challenge_size,batch_size)
+    #     # print(encoded_topic)
+    #     batch_size = len(encoded_topic) * 5
+    #     challenge_pack = []
+    #     [challenges, responses] = self.infer_with_model(id,challenge_size,batch_size)
 
-        batch_empty = False
-        taken_elements = []
-        for topic_index in encoded_topic:
-            for j in range(len(challenges)):
-                try:
-                    if(int(topic_index) == int(responses[j][0])):
-                        challenge_pack.append(challenges.pop(j))
-                        responses.pop(j)
-                        taken_elements.append(j)
-                        break
-                except:
-                    print("length of batch: " + str(len(responses)))
-                    # break
+    #     batch_empty = False
+    #     taken_elements = []
+    #     for topic_index in encoded_topic:
+    #         for j in range(len(challenges)):
+    #             try:
+    #                 if(int(topic_index) == int(responses[j][0])):
+    #                     challenge_pack.append(challenges.pop(j))
+    #                     responses.pop(j)
+    #                     taken_elements.append(j)
+    #                     break
+    #             except:
+    #                 print("length of batch: " + str(len(responses)))
+    #                 # break
         
-        return challenge_pack
+    #     return challenge_pack
 
     def flip_bits(self, binary_array, percentage):
         
@@ -503,6 +544,18 @@ class TTP_Client(PubSub_Base_Executable): ##CHANGE:: change class name
             nn_model = pickle.load(model_file)
             
         return nn_model
+    
+    def load_ldp_set(self,id):
+        prob_model_instance_dir =  "CLIENT_" + id
+        if(path.exists(prob_model_instance_dir) != True):
+            os.mkdir(prob_model_instance_dir)
+        
+        json_dataset = {}
+        with open(prob_model_instance_dir + "/client_ldp_dataset.json") as dataset_file:
+            json_dataset = json.load(dataset_file)
+            # json_dataset = json_dataset[0]
+        # print(json_dataset)
+        return json.loads(json_dataset)
 
 
     def weights_init(self, m):

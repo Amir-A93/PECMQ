@@ -50,6 +50,8 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
         self.executables.append("challenge")
         self.executables.append("register_private_topic")
         self.executables.append("subscribe_to_private_topic")
+        self.executables.append("register_private_topic_ldp")
+        self.executables.append("subscribe_to_private_topic_ldp")
         ## ____________________________________________________________________________________________
 
         
@@ -125,6 +127,19 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
             replen = int(header_body[1].split(' -rl ')[1].split(' -cset ')[0])
             topic = header_body[1].split(' -cset ')[1].split(';')[0]
             self.subscribe_to_private_topic(id,topic, repetition_length = replen)
+
+        if header_parts[2] == 'register_private_topic_ldp':
+            id = header_body[1].split(' -id ')[1].split(' -c ')[0]
+            partner_id = header_body[1].split(' -c ')[1].split(' -rl ')[0]
+            replen = int(header_body[1].split(' -rl ')[1].split(' -cset ')[0])
+            cset = header_body[1].split('-cset ')[1].split(';')[0]
+            self.register_private_topic_ldp(id,cset,pid = partner_id,repetition_length = replen)    
+
+        if header_parts[2] == 'subscribe_to_private_topic_ldp':
+            id = header_body[1].split('-id ')[1].split(' -rl ')[0]
+            replen = int(header_body[1].split(' -rl ')[1].split(' -cset ')[0])
+            topic = header_body[1].split(' -cset ')[1].split(';')[0]
+            self.subscribe_to_private_topic_ldp(id,topic, repetition_length = replen)
 
         # except Exception as e:
         #     print("Error occured or message was not right!")
@@ -328,6 +343,12 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
             
             
 
+    def concat_features(self,features):
+            new_features = np.empty([self.xor_size, self.challenge_size+1, features.shape[1]])
+            for puf in range(self.xor_size):
+                new_features[puf] = features
+            return new_features
+    
     def concat_challenge(self,challenges):
             new_challenges = np.empty([self.xor_size, self.challenge_size, challenges.shape[1]])
             for puf in range(self.xor_size):
@@ -378,7 +399,177 @@ class PUF_Client(PubSub_Base_Executable): ##CHANGE:: change class name
                                                                     " -cput " + str(cpu_time_used))
             
             print("Subscribed to topic " + hashed_topic)
-    ##___________________________________________________
+    ##_________________________________________________________________________________________________________________
+
+
+
+    def register_private_topic_ldp(self,id,cset_cipher,pid,repetition_length):
+            
+            cpu_start_time = time.process_time()
+            # Start measuring memory allocation
+            tracemalloc.start()
+
+            fset = self.decrypt_msg(str(cset_cipher).encode())
+            if(id == self.id):
+                packetized_set = json.loads(fset)
+                
+                # challenge_set = np.transpose(challenge_set,(1,0))
+                
+            
+                # new_challenge_set = self.concat_challenge(challenge_set)
+                # feature_set = self.PUF_instance.calc_features(new_challenge_set)
+                
+                puf_infer_before = datetime.datetime.now()
+                uts_1 = datetime.datetime.timestamp(puf_infer_before)*1000
+                
+                responses = []
+                for i in range(len(packetized_set)):
+                    pack = packetized_set[i]
+                    pack = np.transpose(pack,(1,0))
+                    pack = self.concat_features(pack)
+                    print(pack.shape)
+                    sub_resps = self.PUF_instance.bin_response(pack)
+                    num_ones = 0
+                    for j in sub_resps:
+                        if (int(j) == 1):
+                            num_ones += 1
+                    num_zeros = len(pack) - num_ones
+                    final_resp = 0
+                    if(num_ones > num_zeros):
+                        final_resp = 1
+                    responses.append(final_resp)
+                
+                puf_infer_after = datetime.datetime.now()
+                uts_2 = datetime.datetime.timestamp(puf_infer_after)*1000
+                puf_inference_tdelta = uts_2 - uts_1
+
+                topic = self.decode_topic(repetition_length,responses)
+            
+                #print(self.list_of_partners)
+                partner_index = -1
+                for p in range(len(self.list_of_partners)):
+                    if self.list_of_partners[p][0] == pid:
+                        partner_index = p
+                if(partner_index >= 0):
+
+                    hashed_topic = hashlib.sha256(topic.encode()).hexdigest()
+                    
+                    self.list_of_partners[partner_index][1] = hashed_topic
+                    self.list_of_partners[partner_index][2] = int(repetition_length)
+
+                    transmission_init_time = datetime.datetime.now()
+                    Publish_time = datetime.datetime.timestamp(transmission_init_time)*1000
+            
+                    current, peak = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
+                    # Stop measuring CPU time
+                    cpu_end_time = time.process_time()
+                    memory_usage = current / 10**6  # Convert to MB
+                    peak_memory_usage = peak / 10**6  # Convert to MB
+                    cpu_time_used = cpu_end_time - cpu_start_time  # In seconds
+
+                    self.publish(self.client_to_TTP_topic, 'verify_hash',   "-id " + str(self.id) + 
+                                                                            " -hash " + str(hashed_topic) + 
+                                                                            " -tpuf " + str(puf_inference_tdelta) + 
+                                                                            " -pubtime " + str(Publish_time) + 
+                                                                            " -memavg " + str(memory_usage) + 
+                                                                            " -mempeak " + str(peak_memory_usage) + 
+                                                                            " -cput " + str(cpu_time_used))
+            
+                    print("Updated topic " + topic)
+                else:
+                    hashed_topic = hashlib.sha256(topic.encode()).hexdigest()
+                
+                    self.list_of_partners.append([pid,hashed_topic,repetition_length])
+                    
+                    transmission_init_time = datetime.datetime.now()
+                    Publish_time = datetime.datetime.timestamp(transmission_init_time)*1000
+                    current, peak = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
+                    # Stop measuring CPU time
+                    cpu_end_time = time.process_time()
+                    memory_usage = current / 10**6  # Convert to MB
+                    peak_memory_usage = peak / 10**6  # Convert to MB
+                    cpu_time_used = cpu_end_time - cpu_start_time  # In seconds
+
+                    self.publish(self.client_to_TTP_topic, 'verify_hash',   "-id " + str(self.id) + 
+                                                                            " -hash " + str(hashed_topic) + 
+                                                                            " -tpuf " + str(puf_inference_tdelta) + 
+                                                                            " -pubtime " + str(Publish_time) + 
+                                                                            " -memavg " + str(memory_usage) + 
+                                                                            " -mempeak " + str(peak_memory_usage) + 
+                                                                            " -cput " + str(cpu_time_used))
+            
+                    print("Registered topic " + hashed_topic)
+
+            
+
+    def subscribe_to_private_topic_ldp(self,id,cset_cipher,repetition_length):
+        cpu_start_time = time.process_time()
+        # Start measuring memory allocation
+        tracemalloc.start()
+
+        fset = self.decrypt_msg(str(cset_cipher).encode())
+        if(str(id) == self.id):
+            packetized_set = json.loads(fset)
+            
+            # challenge_set = np.transpose(challenge_set,(1,0))
+            # new_challenge_set = self.concat_challenge(challenge_set)
+            # feature_set = self.PUF_instance.calc_features(new_challenge_set)
+            
+            puf_infer_before = datetime.datetime.now()
+            uts_1 = datetime.datetime.timestamp(puf_infer_before)*1000
+            
+            responses = []
+            for i in range(len(packetized_set)):
+                pack = packetized_set[i]
+                pack = np.transpose(pack,(1,0))
+                pack = self.concat_features(pack)
+                print(pack.shape)
+                sub_resps = self.PUF_instance.bin_response(pack)
+                num_ones = 0
+                for j in sub_resps:
+                    if (int(j) == 1):
+                        num_ones += 1
+                num_zeros = len(pack) - num_ones
+                final_resp = 0
+                if(num_ones > num_zeros):
+                    final_resp = 1
+                responses.append(final_resp)
+            
+            puf_infer_after = datetime.datetime.now()
+            uts_2 = datetime.datetime.timestamp(puf_infer_after)*1000
+            puf_inference_tdelta = uts_2 - uts_1
+
+            wisper_topic = self.decode_topic(repetition_length,responses)
+            hashed_topic = hashlib.sha256(wisper_topic.encode()).hexdigest()
+            self.client.subscribe(topic=hashed_topic)
+
+            transmission_init_time = datetime.datetime.now()
+            Publish_time = datetime.datetime.timestamp(transmission_init_time)*1000
+            current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            # Stop measuring CPU time
+            cpu_end_time = time.process_time()
+            memory_usage = current / 10**6  # Convert to MB
+            peak_memory_usage = peak / 10**6  # Convert to MB
+            cpu_time_used = cpu_end_time - cpu_start_time  # In seconds
+
+            self.publish(self.client_to_TTP_topic, 'verify_hash',   "-id " + str(self.id) +
+                                                                    " -hash " + str(hashed_topic) +
+                                                                    " -tpuf " + str(puf_inference_tdelta) + 
+                                                                    " -pubtime " + str(Publish_time) + 
+                                                                    " -memavg " + str(memory_usage) + 
+                                                                    " -mempeak " + str(peak_memory_usage) + 
+                                                                    " -cput " + str(cpu_time_used))
+            
+            print("Subscribed to topic " + hashed_topic)
+
+            #_______________________________________________________________________________________________________________
+
+
+
+
 
     ##Here you define the rest of the class logic:
 
